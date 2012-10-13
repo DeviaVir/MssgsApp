@@ -291,7 +291,7 @@ var socket = io.connect( 'api.mss.gs', { port: 443, secure: true, reconnect: tru
             setTimeout( function() { // Reasonably high timeout to make sure it happens correctly
                 $( 'section.chat' ).removeClass( 'loading' );
                 app.scroll();
-            }, 500 );
+            }, 1500 );
             $( '#textarea' ).bind( 'keypress', function(e) {
                 var code = (e.keyCode ? e.keyCode : e.which);
                 if(code == 13 && !e.shiftKey) { //Enter keycode
@@ -439,6 +439,7 @@ var socket = io.connect( 'api.mss.gs', { port: 443, secure: true, reconnect: tru
 
 $( window ).load( function() {
     $( app.load );
+    $( window ).trigger( 'resize' );
 });
 $( window ).bind( 'resize', function(){
     app.scroll();
