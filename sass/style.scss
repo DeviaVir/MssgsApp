@@ -1,6 +1,3 @@
-// Here's where we define some default constants
-@import "partials/base";
-
 // Then we'll import the compass extension
 @import "html5-boilerplate";
 @import "compass/css3";
@@ -32,9 +29,11 @@
 
 // Finally, put your own styles in these partials
 // and add more as needed (i.e. forms, tables, nav)
-@import "partials/fonts";
+// @import "partials/fonts";
 @import "partials/animations";
 @import "partials/formalize";
+@import "partials/fontawesome";
+@import "partials/base";
 @import "partials/page";
 
 // Helpers classes should come second-to-last

@@ -1,430 +1,440 @@
-var Application, hooks = [], scroll, Clients, Conversations
-Application = {
-        container: null,
-        resize: null,
-        params: null,
-        home: null,
-        chat: null,
-        run: null,
-        native: false,
-        log: {},
-        keydown: null,
-        executed: false
-}
-Application.run = function() {
-        if( Application.native == true ) {
-                console.log( 'Set native log functions' )
-                
-                // Because Phonegap sucks
-                log.debug = function(msg){
-                        console.log(msg)
-                }
-                log.warn = function(msg){
-                        console.log(msg)
-                }
-                log.error = function(msg){
-                        console.log(msg)
-                }
-                log.info = function(msg){
-                        console.log(msg)
-                }
-                log.message = function(msg){
-                        console.log(msg)
-                }
+var socket = io.connect( 'api.mss.gs', { port: 443, secure: true, reconnect: true } ),
+    user   = JSON.parse( localStorage.getItem( 'user' ) ),
+    conv   = JSON.parse( localStorage.getItem( 'conv' ) ),
+    badgeAmount = 0,
+    global = { // Cool global functions
+        findLinks: function(text) {
+            var exp = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig,
+                img = false;
+            text.replace( exp, function( s, m1 ) {
+                if( global.IsValidImageUrl( m1 ) )
+                    img = true;
+            } );
+            return text.replace( exp, "<a href='$1' target='_blank'>" + ( img ? "<img src='$1' />" : "$1" ) + "</a>" ); 
+        },
+        IsValidImageUrl: function(url) {
+            var isImg = false;
+            switch( url.substr(-3).toLowerCase() ) {
+                case 'png':
+                case 'jpg':
+                case 'gif':
+                case 'bmp':
+                    isImg = true;
+                break;
+            }
+            return( isImg );
+        },
+        capitaliseFirstLetter: function(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
         }
-        
-        if( Application.executed ) return console.log( 'Alreay executed' );
-        Application.executed = true
-        
-        log.debug( 'Run Application' )
-        container = $( '#container' )
-        Application.home = function home() {
-                lang.get( 'current', function( l ) {
-                    switch( l ) {
-                            case 'nl':
-                                    $( '#your_location_pin' ).css({ 'margin-right': '-11px', 'margin-top': '2px' })
-                            break;
-                    }
+    },
+    app    = {
+        load: function() {
+            app.listeners();
+            app.reload();
+
+            // Clear messages
+            $( '#chat-content' ).children().remove();
+
+            // Authorize app (and do logic)
+            socket.emit( 'credentials', { 'id': '27a803c317a8e4f0071d374d7ceb9082', 'secret': 'SVhbc42YvnJy' } );
+        },
+        error: function(text) {
+            alert( text );
+        },
+        reload: function() {
+            $( 'section' ).addClass( 'hidden' );
+        },
+        addUser: function( username, globalop, op, conversation, avatar ) {
+            if( !$( '#main sidebar ul li[data-username="' + username.toLowerCase() + '"]' ).length ) {
+                var li   = $( '<li />' ).attr( 'data-username', username.toLowerCase() ),
+                    span = $( '<span />' ).addClass( 'active' ),
+                    img  = $( '<img />' ).attr( {
+                        'width': 32,
+                        'height': 32
+                    }),
+                    h3   = $( '<h3 />' ).text( username );
+                
+                li.append( span );    
+                if( avatar ) {
+                    li.append( img );
+                }
+                li.append( h3 );
+
+                $( '#main sidebar ul' ).append( li );
+            }
+        },
+        removeUser: function( username, conversation ) {
+            $( '#main sidebar ul li[data-username="' + username.toLowerCase() + '"]' ).remove();
+        },
+        addInternal: function( message, date, init ) {
+            var li   = $( '<li />' ).addClass( 'internal' ),
+                type = message.split( ':' ).shift(),
+                arr  = message.split( ':' ),
+                skip = false,
+                d       = new Date( ( date * 1000 ) ),
+                dateV   = ( '0' + d.getHours() ).slice(-2) + ':' + ( '0' + d.getMinutes() ).slice(-2) + ' ' + ( '0' + d.getDate() ).slice(-2) + '/' + ( '0' + d.getMonth() ).slice(-2) + '/' + d.getFullYear(),
+                allowScroll = ( $( '#main section' ).scrollTop() == $( '#main section article.chat' ).prop( 'scrollHeight' ) ? true : false );
+            arr.shift();
+            message = arr.join( ':' );
+            message = jQuery.parseJSON(message);
+
+            switch( type ) {
+                case 'join':
+                    type    = 'Joined chat';
+                    message = message.username;
+                break;
+                case 'leave':
+                    type    = 'Leaves chat';
+                    message = message.username;
+                break;
+                case 'opunlock':
+                    skip = true;
+                break;
+                case 'kick':
+                    type    = 'Kicked:';
+                    message = message.username;
+                break;
+                case 'me':
+                    type = message.username;
+                    message = message.message;
+                break;
+            }
+
+            if( !skip ) {
+                li.append(
+                    $( '<div />' )
+                ).append(
+                    $( '<div />' ).append(
+                        $( '<span />' ).text( ': ' + message + ' @ ' + dateV ).prepend(
+                            $( '<strong />' ).text( type )
+                        )
+                    )
+                )
+
+                $( '#chat-content' ).append( li );
+                if( !init/* && allowScroll*/ ) 
+                    app.scroll();
+            }
+        },
+        renderMessage: function( text ) {
+                var text = $( '<pre />' ).text( text ).html(),
+                text =  text.trim().replace( /\n/g, ' <br />\n' ) + ' ', patterns = { 
+                        url: /(\s?)(http\:\/\/|https\:\/\/|ftp\:\/\/|ftps\:\/\/|)(www\.|)([a-zA-Z0-9.\-]{1,})([\.]{1}[a-zA-Z0-9\-\&\~]{2,5})([\.]{1}[a-zA-Z\~\&\']{2,5})?(:[0-9]{0,})?(\/[a-zA-Z0-9\&#!:\.\_\;\~?+{}\{\}=\[\,\'&%@!\-\/]{0,})?(?=\s)/gi,
+                        skype: /skype\:\/\/([a-zA-Z0-9]{1,})/gi,
+                        bold: /\[b\]([^\[]{1,})\[\/b\]/gi,
+                        names: /\[name\]([^\[]{1,})\[\/name\]/gi,
+                        italic: /\[i\]([^\[]{1,})\[\/i\]/gi,
+                        indent: /\[indent\]/gi,
+                        code: /```(\s<br \/>\n)?([^`]+)(\s<br \/>\n)?```/gm,
+                        codeSingle: /`(\s<br \/>\n)?([^`]+)(\s<br \/>\n)?`/gm,
+                        name: /\@([a-z\_A-Zé0-9]{1,})(;\s|:\s|\s?)/gi,
+                        tag: /\#([a-zA-Zé0-9\-]{1,})(\s?)/gi
+                };
+      
+                // Methods
+                var codeblocks = [], urls = []
+                text = text.replace( patterns.code, function( full, space, content, space ) {
+                        return '{codeblockm:' + codeblocks.push(content.replace( /<br \/>/gm, '' ).trim()) + '}';
+                })
+                text = text.replace( patterns.codeSingle, function( full, space, content, space ) {
+                        return '{codeblocks:' + codeblocks.push(content.replace( /<br \/>/gm, '' ).trim()) + '}';
                 })
                 
-                if( $( '#container section.home' ).css( 'display' ) != 'block' ) {
-                        $( '#container section' ).slideUp()
-                        $( '#container section.home' ).slideDown(Application.resize)
-                        $( 'header ul li' ).removeClass( 'selected' )
-                        $( 'header ul li.home' ).addClass( 'selected' )
-                }
-                
-                $( '#login_submit' ).show()
-                $( '#register_submit' ).hide()
-                $( '#home_no_account' ).show()
-                $( '#home_has_account' ).hide()
-                
-                if( local.get( 'email' ) ) {
-                        $( '#login_username' ).val( local.get( 'email' ) )
-                        setTimeout(function(){
-                                $( '#login_password' ).focus()
-                        }, 500)
-                }
-                
-                $( '#login_username, #login_password' ).keypress(function(){
-                        $( 'section.home article.login' ).removeClass( 'red' )
-                })
-                
-                $( '#login_submit' ).click(function( event, method ){
-                        event.preventDefault()
-                        Clients.getLocal().emit( 'authentication request' )
-                        Clients.getLocal().authenticate({
-                                'username': $( '#login_username' ).val(),
-                                'password': $( '#login_password' ).val(),
-                                'method'  : ( method ? method : 'plain' )
-                        }, function( response ){
-                                if( response.valid === true ) {
-                                        $( 'section.home article.login' ).remove()
-                                        $( 'header ul li.chat, header ul li.contacts' ).show()
-                                        $( 'header ul li.home, header ul li.account' ).hide()
-                                        Application.chat( 'main' )
+                var foundVideos = 0;
+                text = text.replace( patterns.url, function( url, opt, prefix, www ) {
+                        url = url.trim()
+                        if( !prefix )
+                                url = 'http://' + url
+                                
+                        if( foundVideos < 2 ) {
+                                var youtube = null, args = []
+                                if( arguments[4] == 'open.spotify' && arguments[5] == '.com' && arguments[8] && (arguments[8].substr( 0, 6 ) == '/track' || arguments[8].substr( 0, 6 ) == '/album' || arguments[8].split('/')[3] == 'playlist' ) ) {     
+                                        foundVideos++;
+                                        return '<iframe class="embed spotify" src="https://embed.spotify.com/?uri=spotify' + arguments[8].replace( /\//g, ':' ).replace( /\"/g, '' ).replace( /[^a-z\:A-Z0-9\_]+/g, '' ).trim() + '" width="300" height="80" frameborder="0" allowtransparency="true"></iframe>';
                                 }
-                                else
-                                        $( 'section.home article.login' ).addClass( 'red' )
-                        })
-                        return false;
-               })
-               
-               if( local.get( 'hash' ) && Application.native ) {
-                        $( '#login_password' ).val( local.get( 'hash' ) )
-                        $( '#login_submit' ).trigger( 'click', ['hash'] )
-               }
-        }
-        Application.register = function register() {
-                if( $( '#container section.home' ).css( 'display' ) != 'block' ) {
-                        $( '#container section' ).slideUp()
-                        $( '#container section.home' ).slideDown(Application.resize)
-                        $( 'header ul li' ).removeClass( 'selected' )
-                        $( 'header ul li.home' ).addClass( 'selected' )
-                }
-                
-                $( 'html,body' ).animate({ scrollTop: $( "#container section.home article.login" ).offset().top }, 'slow' )
-                
-                $( '#login_submit' ).hide()
-                $( '#register_submit' ).show()
-                $( '#home_no_account' ).hide()
-                $( '#home_has_account' ).show()
-                
-                if( local.get( 'email' ) ) {
-                        $( '#login_username' ).val( local.get( 'email' ) )
-                        setTimeout(function(){
-                                $( '#login_password' ).focus()
-                        }, 500)
-                }
-                
-                $( '#login_username, #login_password' ).keypress(function(){
-                        $( 'section.home article.login' ).removeClass( 'red' )
-                })
-                
-                $( '#login_submit' ).click(function( event ){
-                        event.preventDefault()
-                        Clients.getLocal().emit( 'register request' )
-                        Clients.getLocal().register({
-                                'username': $( '#login_username' ).val(),
-                                'password': $( '#login_password' ).val(),
-                                'method'  : 'plain'
-                        }, function( response ){
-                                if( response.valid === true ) {
-                                        $( 'section.home article.login' ).remove()
-                                        $( 'header ul li.chat, header ul li.contacts' ).show()
-                                        $( 'header ul li.home, header ul li.account' ).hide()
+                                else if( arguments[4] == 'vimeo' && arguments[5] == '.com' && !isNaN( arguments[8].substr(1) ) ) {
+                                        foundVideos++;
+                                        return '<iframe class="embed youtube" src="http://player.vimeo.com/video' + arguments[8].replace( /\"/g, '' ).replace( /[^a-zA-Z0-9\_]+/g, '' ).trim() + '" width="560" height="315" frameborder="0" webkitAllowFullScreen mozallowfullscreen allowFullScreen></iframe>';
                                 }
-                                else
-                                        $( 'section.home article.login' ).addClass( 'red' )
-                        })
-                        return false;
-                })
-        }	        
-        Application.features = function Features() {
-                $( '#container section' ).slideUp()
-                $( '#container section.features' ).slideDown(Application.resize)
-                $( 'header ul li' ).removeClass( 'selected' )
-                $( 'header ul li.features' ).addClass( 'selected' )
-        }
-        Application.plans = function() {
-                $( '#container section' ).slideUp()
-                $( '#container section.main' ).slideDown(Application.resize)
-                $( 'header ul li' ).removeClass( 'selected' )
-                $( 'header ul li.plans' ).addClass( 'selected' )
-        }
-        Application.faq = function() {
-                $( '#container section' ).slideUp()
-                $( '#container section.main' ).slideDown(Application.resize)
-                $( 'header ul li' ).removeClass( 'selected' )
-                $( 'header ul li.faq' ).addClass( 'selected' )
-        }
-        Application.chat = function Chat( id ) {
-                var params = {id:id}
-                if( !Clients.getLocal().is( 'authenticated' ) )
-                        return Application.home()
-                if( params && Conversations.get( 'active', 1 ) !== false && params[ 'id' ] == Conversations.get( 'active', 1 ).get( 'id' ) )
-                        return log.debug( 'This conversation is already active' );
+                                else if( arguments[4] == 'youtu' && arguments[5] == '.be' && arguments[8] && arguments[8].split( '&' )[0].match(/[a-zA-Z0-9\-\/.]/) != null ) {
+                                        foundVideos++;
+                                        youtube = arguments[8].split( '&' )[0]
+                                        args = arguments[8].split( '&' ).splice(1)
+                                }
+                                else if( arguments[4] == 'youtube' && arguments[5] == '.com' && arguments[8] && arguments[8].substr( 0, 6 ) != '/watch' && arguments[8] && arguments[8].split( '/' )[2].match(/[a-zA-Z0-9\)\-\/.]/) != null ) {
+                                        foundVideos++;
+                                        youtube = arguments[8].split( '/' )[2]
+                                }
+                                else if( arguments[4] == 'youtube' && arguments[5] == '.com' && arguments[8] && arguments[8].substr( 0, 6 ) == '/watch' ) {
+                                        foundVideos++;
+                                        youtube = arguments[8].split( 'v=' )[1].split( '&amp;' )[0]
+                                        args = arguments[8].split( 'v=' )[1].split( '&amp;' ).splice(1)
+                                }
+                                if( youtube ) 
+                                        return '<iframe class="embed youtube" width="560" height="315" src="https://www.youtube-nocookie.com/embed/' + youtube.replace( /[^a-zA-Z0-9\-\_]+/g, '' ).trim() + '?theme=light" frameborder="0" allowfullscreen></iframe>';
+                                delete youtube, args
+                        }
                         
-                Application.params = params
-                $( '#container .chat article.post textarea' ).unbind( 'keydown' ).keydown(function( event ){
-                        if( $(this).val().length > 2000 ) $( this ).val( $(this).val().substr(0, 2000) )
-                        if( event.keyCode == 13 ) {
-                                $( '#container .chat article.post input' ).click()
-                                event.preventDefault() 
-                                return false
-                        }
-                })
-                $( '#container .chat article.post input.prev' ).unbind( 'focus' ).bind( 'focus', function(){
-                        gui.conversation.emit( 'prev tab', [false] )
-                        $(this).blur()
-                })
-                $( '#container .chat article.post input.next' ).unbind( 'focus' ).bind( 'focus', function(){
-                        gui.conversation.emit( 'next tab', [false] )
-                        $(this).blur()
-                })
-                $( '#container' ).addClass( 'chat' )
-                
-                // Remove unneeded data for native
-                if( Application.native ) {
-                        $( 'header, footer' ).remove()
-                        $( 'section.home, section.main, section.features' ).remove()  
-                }
-
-                if( Application.params[ 'id' ] == 'new' ) {
-                        if( ( conv = Conversations.get( 'active', 1 ) ) !== false ) {
-                                conv.set( 'active', 0 )
-                                $( '#tab-list' ).find( 'li.current' ).removeClass( 'current' );
-                                $( '#tab-list' ).find( 'li span.close' ).hide()
-                        }
-
-                        $( '#chat-content' ).parent().hide()
-                        $( '#chat-content' ).parent().next().hide()
-                        $( '#chat-head' ).hide()
-                        $( '#container .chat article.post input' ).attr( 'value', lang.get( 'send' ) ).unbind( 'click' ).click(function(){
-                                (new Conversation()).emit( 'create conversation', [$( '#container .chat article.post textarea' ).val()] )
-                                $( '#container .chat article.post textarea' ).val('')
-                        })
-                }
-                else {
-                        $( '#chat-content' ).parent().show()
-                        $( '#chat-content' ).parent().next().hide()
-                        $( '#chat-content' ).parent().next().find( 'p' ).text( lang.get( 'file.drop' ) )
-                        $( '#chat-content' ).parent().next().find( 'input' ).attr( 'value', lang.get( 'file.add' ) )
-                        if( Application.native === false )
-                                $( '#chat-head' ).show()
-                        else
-                                $( '#chat-head' ).hide()
-                        $( '#container .chat article.post input[type="submit"]' ).attr( 'value', lang.get( 'send' ) ).unbind( 'click' ).click(function(){
-                                if( ( conv = Conversations.get( 'active', 1 ) ) !== false ) {
-                                        conv.emit( 'new message', [$( '#container .chat article.post textarea' ).val()] )
-                                        $( '#container .chat article.post textarea' ).val('')
+                        /*var urlChecker = url.replace( /http:\/\//g, '' ).replace( /https:\/\//g, '' );
+                        if( urlChecker.substr(0,12) == 'twitter.com/' ) {
+                                // Is status?
+                                var urlSplit = urlChecker.split( '/' );
+                                if( urlSplit[2] == 'status' ) {
+                                        var tweetId = urlSplit[3].replace( /[^0-9]+/g, '' ).trim(), tweetIdTime = ( tweetId + '' + new Date().getTime() );
+                                        $.get( 'http://api.twitter.com/1/statuses/oembed.json?id=' + tweetId + '&align=left&omit_script=true&callback=?', function(resp){
+                                                $( '#' + tweetIdTime ).html( resp.html )
+                                                setTimeout(function(){
+                                                        gui.conversation.emit( 'scrolldown', [maxIt] )
+                                                }, 10);
+                                        }, 'jsonp' )
+                                        return '<tweet class="tweet" id="' + tweetIdTime + '">Loading tweet..</tweet>';
                                 }
-                        })
-                }
-        
-                $( '#container section' ).css( 'display', 'none' )
-                $( '#chat-thumbs' ).hide()
-                $( '#container section.chat' ).css( 'display', 'block' )
-                Application.resize.apply(this,[])
-                
-                $( 'header ul li' ).removeClass( 'selected' )
-                $( 'header ul li.chat' ).addClass( 'selected' )
-                if( Application.native === false ) 
-                        setTimeout(function(){
-                                $( '#container .chat article.post textarea' ).focus()
-                        }, 50)
-                delete params;
-        }
-        
-        Application.home()        
-        $(this).trigger( 'resize' )
-        
-        // Run hooks
-        if( hooks.length ) {
-                do {
-                        try { (hooks.shift())(); } 
-                        catch( e ) {
-                                log.error( 'Hook crashed with the following reason(s)' )
-                                log.error( e )
+                        }*/
+   
+                        var imgurCode;
+                        if( url.substr(7,9) == 'imgur.com' ) {
+                                // Cross request
+                                imgurCode = url.replace( /gallery\//g, empty ).substr(17)
+                                $.getJSON( 'http://api.imgur.com/2/image/' + imgurCode + '.json', function(data) {
+                                        if( data ) {
+                                                $( '#chat-content a.imgur.' + data.image.image.hash ).each(utils.scope(data,function(i,el){
+                                                        $( '<img />' ).data( 'url', this.image.links.imgur_page ).attr( 'src', this.image.links.small_square ).bind( 'load', function(){
+                                                                gui.conversation.emit( 'scrolldown', [maxIt] )
+                                                        }).click(function(){
+                                                                window.open($(this).data( 'url' ))
+                                                        }).addClass( 'thumb' ).insertBefore( el )
+                                                        $(el).remove()
+                                                }))
+                                        }
+                                })
                         }
-                } while( hooks.length )
-        }
-        else {
-                log.debug( 'No hooks to run' )
-        }
-        delete hooks;
-}
-
-$(window).bind( 'keydown', function(event){
-        if( Conversations.get( 'active', 1 ) !== false 
-         && $( '#container .chat article.post textarea' )[0] != document.activeElement 
-         && !Application.native ) {
-                var e = jQuery.Event( 'keydown' );
-                e.keyCode = event.keyCode;
-                if( e.keyCode != 91 && !( Application.keydown == 91 && e.keyCode == 67) )
-                        $( '#container .chat article.post textarea' ).focus().trigger( e )
-                Application.keydown = e.keyCode
-        }
-}).resize(( Application.resize = function(){
-        $( '#container' ).css( 'height', 'auto' )
-        
-        var outerHeight, total
-        if( ( outerHeight = $( '#container' ).outerHeight() ) < $( window ).height() ) {
-                $( '#container' ).css( 'height', ( $( window ).height() - ( Application.native ? 50 : 100 ) ) + 'px' )
+                        else {
+                                var imageCheckUrl = url.split( '?' )[0],
+                                imageCheckExtensionURL = imageCheckUrl.toLowerCase()
+                                if( imageCheckExtensionURL.substr( -6 ) == ':large' || imageCheckExtensionURL.substr( -4 ) == '.png' || imageCheckExtensionURL.substr( -4 ) == '.jpg' || imageCheckExtensionURL.substr( -4 ) == '.gif' || imageCheckExtensionURL.substr( -5 ) == '.jpeg' 
+                                 || imageCheckExtensionURL.substr( -7, 4 ) == '.png' || imageCheckExtensionURL.substr( -7, 4 ) == '.jpg' || imageCheckExtensionURL.substr( -7, 4 ) == '.gif' || imageCheckExtensionURL.substr( -8, 5 ) == '.jpeg' )
+                                        return opt + '<img onerror="$(\'<i>\' + this.src.substr(7) + \'</i>\').insertBefore(this); $(this).remove(); app.scroll();" src="' + imageCheckUrl.replace( /"/, '%22' ) + '" onload="app.scroll();" class="thumb" onclick="window.open(\'' + imageCheckUrl.replace( /"/, '%22' ).replace( /'/, '\\\'' ) + '\')" />';
+                                delete imageCheckUrl, imageCheckExtensionURL 
+                        }
+                        
+                        url = $( '<div />' ).html( url ).text()
+                        return '{url:' + urls.push(opt + $( '<div />' ).append( $( '<a />' ).addClass( 'link' + ( imgurCode ? ' imgur ' + imgurCode : null ) ).attr( 'target', '_blank' ).attr( 'href', url ).text( ( www ? url.split( '://www.' )[1] : url.split( '://' )[1] ) ) ).html()) + '}'
+                })
                 
-                if( Application.native === false ) {
-                        total = ($( window ).height()-outerHeight);
-                        if( total > 0 ) 
-                                $( '.chat .content' ).height( parseInt($( '.chat .content' ).css( 'min-height' )) + total )
-                }
-        }
-        
-        if( Application.native === false ) {
-                $( '.chat .content' ).height( parseInt($( '.chat .content' ).css( 'min-height' )) );
+                //text = text.replace( patterns.name, utils.scope(me[0], function( full, name, opt ) {
+                //        return '<a class="mention" target="_blank" href="https://twitter.com/' + name.replace( /[^a-zA-Z0-9]+/g, '' ).trim() + '"><tag class="tag">@</tag>' + name + '</a>' + opt
+                //}))
+                //text = text.replace( patterns.tag, utils.scope(me[0], function( full, name, opt ) {
+                //        return '<a class="tag" target="_blank" href="http://express.mss.gs/channel/' + name.replace( /[^a-zA-Z0-9]+/g, '' ).trim() + '"><tag class="tag">#</tag>' + name + '</a>' + opt
+                //}))
+                text = text.replace( patterns.names, function( text, name ) {
+                        return '<b>' + name + '</b>'
+                })
+                text = text.replace( patterns.bold, function( text, name ) {
+                        return '<strong>' + name + '</strong>'
+                })
+                text = text.replace( patterns.indent, function( text, name ) {
+                        return '&nbsp;'
+                })
+                text = text.replace( patterns.italic, function( text, name ) {
+                        return '<i>' + name + '</i>'
+                })
+                text = text.replace( /\{codeblockm:([0-9]{0,})\}/gi, function( text, num ){
+                        return $( '<div />' ).append( $( '<pre />' ).addClass( 'multi' ).addClass( 'code' ).html( codeblocks[(num-1)] ) ).html()
+                })
+                text = text.replace( /\{codeblocks:([0-9]{0,})\}/gi, function( text, num ){
+                        return $( '<div />' ).append( $( '<pre />' ).addClass( 'single' ).addClass( 'code' ).html( codeblocks[(num-1)] ) ).html()
+                })
+                text = text.replace( /\{url:([0-9]{0,})\}/gi, function( text, num ){
+                        return urls[( num -1 )]
+                })
                 
-                gui.conversation.emit( 'scrolldown' )
-                if( local.get( 'fullscreen' ) == 1 ) 
-                        $( '#container section.chat' ).css( 'width', ( $( window ).width() - 100 ) + 'px' )
-                else
-                        $( '#container section.chat' ).css( 'width', parseInt($( '#container section.chat' ).css( 'min-width' )) )
-        }
-        delete outerHeight, total;
-}))
+                return text;
+        },
+        addMessage: function( who, text, avatar, date, me, init ) {
+            var li      = $( '<li />' ).attr( 'data-username', who.toLowerCase() ),
+                message = app.renderMessage( text ),
+                p       = $( '<p />' ).html( message ),
+                d       = new Date( ( date * 1000 ) ),
+                dateV   = ( '0' + d.getHours() ).slice(-2) + ':' + ( '0' + d.getMinutes() ).slice(-2) + ' ' + ( '0' + d.getDate() ).slice(-2) + '/' + ( '0' + d.getMonth() ).slice(-2) + '/' + d.getFullYear(),
+                allowScroll = ( $( '#chat-content' ).scrollTop() == $( '#chat-content' ).prop( 'scrollHeight' ) ? true : false );
 
-document.addEventListener( 'deviceready', function(){
-        console.log( 'Device ready' )
-        $( '#container, body, html' ).addClass( 'native' )
-        createNativeFunctions()
-        Application.native = true
-        Application.executed = false
-        
-        // Events
-        document.addEventListener( 'pause', function(){
-                if( Clients.getLocal().connection ) {
-                        Clients.getLocal().connection.socket.disconnect()
+            $( '#chat-content li[data-username="' + who.toLowerCase() + '"]' ).attr( 'data-date', date )
+            if( $( '#chat-content li:last-child' ).attr( 'data-username' ) == who.toLowerCase() ) {
+                $( '#chat-content li:last-child div' ).append(
+                    $( '<span />' ).text( dateV )
+                );
+                $( '#chat-content li:last-child div' ).append( p );
+            } else {
+                li.append(
+                    $( '<div />' ).append(
+                        $( '<span />' ).text( ' - ' + dateV ).prepend(
+                            $( '<strong />' ).text( who )
+                        )
+                    ).append(
+                        p
+                    )
+                );
+                $( '#chat-content' ).append( li );
+            }
+
+            if( who == user.username )
+                li.addClass( 'me' );
+
+            if( !init /*&& allowScroll*/ )
+                app.scroll();
+        },
+        chat: function( conversation ) {
+            $( 'section.chat' ).removeClass( 'hidden' )
+            $( 'section.chat' ).addClass( 'loading' );
+            setTimeout( function() { // Reasonably high timeout to make sure it happens correctly
+                $( 'section.chat' ).removeClass( 'loading' );
+                app.scroll();
+            }, 3000 );
+            $( '#textarea' ).bind( 'keypress', function(e) {
+                var code = (e.keyCode ? e.keyCode : e.which);
+                if(code == 13 && !e.shiftKey) { //Enter keycode
+                    socket.emit( 'message', { 'text': $( '#textarea' ).val(), 'conversation': conversation } );
+                    $( '#textarea' ).val( "" );
+                    e.preventDefault();
                 }
-        }, false)
-        document.addEventListener( 'resume', function(){
-                if( Clients.getLocal().connection ) {
-                        gui.connection.emit( 'reconnect' )
-                        Clients.getLocal().connection.socket.connect();
+            });
+        },
+        home: function() {
+            $( 'section.home' ).removeClass( 'hidden' );
+            $( '#login_form' ).bind( 'submit', function(e) {
+                socket.emit( 'auth', {
+                    'username': $( '#login_username' ).val(),
+                    'conversationId': ''
+                } );
+
+                if( conv && conv.conversation ) {
+                    app.error( 'Conversation already exists. Please log out first.' );
+                } else {
+                    if( $( '#login_password' ).val() )
+                        localStorage.setItem( 'password', $( '#login_password' ).val() );
+                    socket.emit( 'join conversation', { 'conversation': $( '#login_channel' ).val(), 'password': ( $( '#login_password' ).val() ? $( '#login_password' ).val() : false ) } );
                 }
-        }, false)
-        
-        // Because PhoneGap debugging sucks, we run everything in a catch
-        try {
-                Application.run()
-        }
-        catch( e ) {
-                console.log( e )
-        }
-}, false )
-
-setTimeout(function(){
-        if( !Application.native )
-                Application.run()
-}, 500)
-
-// Lazy event emitters
-var events = {
-        clear: function() {
-                this.events = {}
+                e.preventDefault();
+            });
         },
-        emit: function( name, args ) {
-                if( (name in this.events) ) {
-                        for( i in this.events[name] )
-                                this.events[name][i].apply(this, args)
+        logout: function() {
+            user = 0;
+            conv = 0;
+            localStorage.removeItem( 'user' );
+            localStorage.removeItem( 'conv' );
+            localStorage.removeItem( 'password' );
+            app.reload();
+        },
+        listeners: function() {
+            $( '#logout' ).bind( 'click', function() {
+                app.reload();
+                app.logout();
+                app.home();
+                document.location.reload(true);
+            });
+
+            socket.on( 'auth', function( data ) {
+                if( data.valid ) {
+                    var userData = {};
+                    userData.username = data.username;
+                    userData = JSON.stringify( userData );
+                    localStorage.setItem( 'user', userData );
+                    user = JSON.parse( localStorage.getItem( 'user' ) );
+                    app.reload();
+                    if( conv && conv.conversation ) {
+                        app.chat( conv.conversation );
+                        socket.emit( 'join conversation', { 'conversation': conv.conversation, 'password': ( localStorage.getItem( 'password' ) ? localStorage.getItem( 'password' ) : false ) } );
+                    } else {
+                        app.home();
+                    }
+                } else {
+                    app.reload();
+                    app.error( 'Invalid user' );
                 }
-        },
-        on: function( name, cb ) {
-                if( !(name in this.events) )
-                        this.events[name] = []
-                this.events[name].push(cb)
-        }
-}
+            } );
 
-// Just lazy helper object
-var local = {
-        set: function( key, value ) {
-                if( !this.canStore() ) return debug( 'Unable to store on local machine' );
-                localStorage.setItem( key, value );  
-        },
-        get: function( key ) {
-                if( !this.canStore() ) return debug( 'Unable to load stored item on local machine' );
-                return localStorage.getItem( key ) || '';
-        },
-        remove: function( key ) {
-                if( !this.canStore() ) return debug( 'Unable to remove stored item from local machine' );
-                if( this.item( key ) )
-                        localStorage.removeItem( key );
-        },
-        
-        // Check methods
-        canStore: function() {
-                return ( 'localStorage' in window ) 
-                    && ( window[ 'localStorage' ] !== null );
-        }
-}
-
-// Extend existing objects
-Date.prototype.humanDate = function() {
-        return lang.get( 'date.week.' + this.getDay() ).toLowerCase() + ' ' + this.getDate() + ' ' + lang.get( 'date.month.' + this.getMonth() ) + ' ' + this.getFullYear()
-}
-Date.prototype.humanTime = function() {
-        return ( this.getHours() <= 9 ? '0' + this.getHours() : this.getHours() )  + ':' + ( this.getMinutes() <= 9 ? '0' + this.getMinutes() : this.getMinutes() )
-}
-
-function createNativeFunctions() {
-        console.log( 'set APN & zoom' )
-        
-        // Zoom
-        document.documentElement.addEventListener( 'touchstart', function(event) {
-                if( (event.target.nodeName == 'SELECT') 
-                 || (event.target.nodeName == 'INPUT') 
-                 || (event.target.nodeName == 'TEXTAREA') ) { // it is a combo
-                        document.getElementById( 'view' ).setAttribute( 'content', 'width=device-width, user-scalable=no' )
-                        setTimeout(function () {
-                            document.getElementById( 'view' ).setAttribute( 'content', 'width=device-width, user-scalable=yes' );
-                        }, 1000);
+            socket.on( 'credentials', function(data) {
+                if( data.valid ) {
+                    if( user && user.username ) {
+                        socket.emit( 'auth', {
+                            'username': user.username,
+                            'conversationId': ( conv ? conv.conversation : '' )
+                        } );
+                    } else {
+                        app.home();
+                    }
+                } else {
+                    app.error( 'Invalid app' );
                 }
-        }, true)
+            });
 
-        // IMPORTANT: must start notify after device is ready,
-        // otherwise you will not be able to receive the launching notification in callback
-        //PushNotification.startNotify();
-        window.plugins.pushNotification.startNotify();
-        
-        /**
-         * Customize following callbacks in your application
-         */
-        
-        // Customized callback for receiving notification
-        PushNotification.prototype.notificationCallback = function (notification) {
-            window.plugins.pushNotification.log("Received a notification.");
-            // alert(notification['alert']);
-        };
-        
-        // when APN register succeeded
-        function successCallback(e) {
-            registerUAPush(e.deviceToken, e.host, e.appKey, e.appSecret);
+            socket.on( 'usernames', function(data) {
+                $.each( data.usernames, function(i) {
+                    username = data.usernames[i];
+                    app.addUser( username, data.conversation );
+                });
+            })
+
+            socket.on( 'conversation', function(data) {
+                var convData = {};
+                convData[ 'channel' ] = data.channel;
+                convData[ 'conversation' ] = data.conversation;
+                convData[ 'activity' ] = data.activity;
+                if( localStorage.getItem( 'password' ) )
+                    convData[ 'password' ] = localStorage.getItem( 'password' );
+                localStorage.setItem( 'conv', JSON.stringify( convData ) );
+                var conv = JSON.parse( localStorage.getItem( 'conv' ) );
+
+                app.reload();
+                app.chat( data.conversation );
+            });
+
+            socket.on( 'message', function( data ) {
+                var init = false;
+                if( data.provider == 'internal' ) {
+                    app.addInternal( data.message, data.date, false );
+                } else {
+                    app.addMessage( data.username, data.message, data.image, data.date, false, init );
+                }
+            });
+
+            socket.on( 'messages', function( data ) {
+                $.each( data, function(i) {
+                    message = data[i];
+                    app.addMessage( message.username, message.message, message.image, message.date, false, true );
+                    
+                    if( i == ( data.length - 1 ) ) {
+                        app.scroll();
+                    }
+                });
+            });
+
+            socket.on( 'join conversation', function(data) {
+                app.addUser( data.username, data.op, data.globalop, data.conversation );
+            });
+
+            socket.on( 'leave conversation', function(data) {
+                app.removeUser( data.username, data.conversation );
+            });
+
+            socket.on( 'reconnect', function() {
+                app.reload();
+                app.load();
+            });
+
+            socket.on( 'disconnect', function() {
+            });
+        },
+        scroll: function() {
+            $( 'html,body' ).animate({ scrollTop: $( '#chat-content' ).prop( 'scrollHeight' ) }, 500);
         }
-        
-        // when APN register failed
-        function errorCallback(e) {
-            console.log(e.error)
-        }
-        
-        // register button action
-        function registerAPN() {
-            window.plugins.pushNotification.log("Registering with APNS via the App Delegate");
-            window.plugins.pushNotification.register(successCallback, errorCallback, [{ alert:true, badge:true, sound:true }]);
-        }
-        
-        // register urban airship push service after APN is registered successfully
-        function registerUAPush(deviceToken, host, appKey, appSecret) {
-            window.plugins.pushNotification.log("Registering with Local Data.");
-            Clients.getLocal().set( 'device token', deviceToken )
-        }
-        
-        registerAPN()
-}
+    };
+
+$( window ).load( function() {
+    $( app.load );
+});
+$( window ).bind( 'resize', function(){
+    app.scroll();
+});
